@@ -23,7 +23,9 @@ class CNNModel(nn.Module):
 		self.dropout = nn.Dropout(p=dropout)
 		# self.fc_layer_1 = nn.Linear((len_max_seq//16)*256, 256)
 		self.fc_layer_1 = nn.Linear(3072, 256)
-		self.output_layer = nn.Linear(256, n_tgt_vocab)
+		self.output_layer_1 = nn.Linear(256, n_tgt_vocab)
+		self.output_layer_2 = nn.Linear(256, n_tgt_vocab)
+		self.output_layer_3 = nn.Linear(256, n_tgt_vocab)
 		self.relu_activation = nn.ReLU()
 
 
@@ -64,9 +66,11 @@ class CNNModel(nn.Module):
 
 		output = self.dropout(output.view(output.size()[0], -1))
 		output_fc_layer = self.relu_activation(self.fc_layer_1(output))
-		target = self.output_layer(self.dropout(output_fc_layer))
+		target_p = self.output_layer_1(self.dropout(output_fc_layer))
+		target_i = self.output_layer_2(self.dropout(output_fc_layer))
+		target_o = self.output_layer_3(self.dropout(output_fc_layer))
 
-		return target, output_fc_layer
+		return target_p, target_i, target_o
 
 
 
@@ -75,18 +79,23 @@ class BERTCLassifierModel(nn.Module):
 		super().__init__()
 		self.bert = BertModel.from_pretrained('bert-base-uncased')
 		self.fc_layer = nn.Linear(768, 768)
-		self.output_layer = nn.Linear(768, n_tgt_vocab)
-
+		self.output_layer_1 = nn.Linear(768, n_tgt_vocab)
+		self.output_layer_2 = nn.Linear(768, n_tgt_vocab)
+		self.output_layer_3 = nn.Linear(768, n_tgt_vocab)
 
 	def forward(self, input_idxs, input_mask):
 		enc_out, _ = self.bert(input_idxs, attention_mask=input_mask, output_all_encoded_layers=False)
+		
 		# extract encoding for the [CLS] token
 		enc_out = enc_out[:,0,:]
 		enc_out = self.fc_layer(enc_out)
-		# pass the embedding for [CLS] token to the final classification layer
-		target = self.output_layer(enc_out)
 		
-		return target
+		# pass the embedding for [CLS] token to the final classification layer
+		target_p = self.output_layer_1(enc_out)
+		target_i = self.output_layer_2(enc_out)
+		target_o = self.output_layer_3(enc_out)
+		
+		return target_p, target_i, target_o
 
 
 
