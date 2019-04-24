@@ -1,2 +1,1 @@
-# cnn-encoder
-# pico-tagging
+# pico-tagging experiments
