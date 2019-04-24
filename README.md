@@ -1,1 +1,1 @@
-# pico-tagging experiments
+# PICO-tagging Experiments
