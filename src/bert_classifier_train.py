@@ -9,7 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from pytorch_pretrained_bert import BertTokenizer
 from model.Models import CNNModel, BERTCLassifierModel
-from eval.eval import f1_score
+from eval.eval import f1_score, precision_score, recall_score
 from utils.embedding_operations import read_embeddings
 
 # Global variables
@@ -26,7 +26,7 @@ np.random.seed(9001)
 
 def extract_target_vocab(data):
 	vocab = []
-	for sample in data::
+	for sample in data:
 		vocab += [triplet[2] for triplet in sample['population condition'] if triplet[2] is not "NULL"]
 		vocab += [triplet[2] for triplet in sample['intervention applied'] if triplet[2] is not "NULL"]
 		vocab += [triplet[2] for triplet in sample['outcome condition'] if triplet[2] is not "NULL"]
@@ -38,7 +38,7 @@ def extract_target_vocab(data):
 
 	return idx_to_cui, cui_to_idx 
 
-def display(f1_score_micro_p, f1_score_macro_p, f1_score_micro_i, f1_score_macro_i, f1_score_micro_o, f1_score_macro_o):
+def display(results):
 	print ("F1 Score Micro Population: ", f1_score_micro_p)
 	print ("F1 Score Macro Population: ", f1_score_macro_p)
 	print ("F1 Score Micro intervention: ", f1_score_micro_i)
@@ -58,7 +58,7 @@ def prepare_data(data, cui_to_idx, tokenizer):
 	
 	for article in data:
 		input_text = article['population text'] + article['intervention text'] + article['outcome text']
-		tokenized_text = tokenizer.tokenize('[CLS] '+article['abstract'].lower())[0:512]
+		tokenized_text = tokenizer.tokenize('[CLS] ' + input_text.lower())[0:512]
 		idx_seq = tokenizer.convert_tokens_to_ids(tokenized_text)
 		src_seq = np.zeros(max_seq_len)
 		src_seq[0:len(idx_seq)] = idx_seq
@@ -95,59 +95,59 @@ def prepare_data(data, cui_to_idx, tokenizer):
 	
 	return X, Mask, Y_p, Y_i, Y_o
 
-def train(model, data, criterion, cui_to_idx, idx_to_cui, tokenizer):
-	X, Mask, Y_p, Y_i, Y_o = prepare_data(data)
+def train(model, train_data, val_data, criterion, cui_to_idx, idx_to_cui, tokenizer):	
 	
+	
+	X, Mask, Y_p, Y_i, Y_o = prepare_data(train_data, cui_to_idx, tokenizer)
+
 	best_f1_score = -100
 	list_losses = []	
 	for ep in range(max_epochs):
 		model = model.train()
-			while i < len(X.shape[0]):
-				input_idx_seq = torch.tensor(X[i:i+batch_size]).to(device, dtype=torch.long)
-				input_mask = torch.tensor(Mask[i:i+batch_size]).to(device, dtype=torch.long)
-				target_p = torch.tensor(Y_p[i:i+batch_size]).to(device, dtype=torch.float)
-				target_i = torch.tensor(Y_i[i:i+batch_size]).to(device, dtype=torch.float)
-				target_o = torch.tensor(Y_o[i:i+batch_size]).to(device, dtype=torch.float)
-				output_p, output_i, output_o = model(input_idx_seq, input_mask)
+		i = 0
+		while i < X.shape[0]:
+			input_idx_seq = torch.tensor(X[i:i+batch_size]).to(device, dtype=torch.long)
+			input_mask = torch.tensor(Mask[i:i+batch_size]).to(device, dtype=torch.long)
+			target_p = torch.tensor(Y_p[i:i+batch_size]).to(device, dtype=torch.float)
+			target_i = torch.tensor(Y_i[i:i+batch_size]).to(device, dtype=torch.float)
+			target_o = torch.tensor(Y_o[i:i+batch_size]).to(device, dtype=torch.float)
+			output_p, output_i, output_o = model(input_idx_seq, input_mask)
 
-				# computing the loss over the prediction
-				loss = (criterion(output_p, target_p) + criterion(output_i, target_i) + criterion(output_o, target_o))*1/3.0
-				loss = torch.sum(loss, dim=(1))
-				loss = torch.mean(loss)
-				print ("loss: ", loss)
+			# computing the loss over the prediction
+			loss = (criterion(output_p, target_p) + criterion(output_i, target_i) + criterion(output_o, target_o))*1/3.0
+			loss = torch.sum(loss, dim=(1))
+			loss = torch.mean(loss)
+			print ("loss: ", loss)
 
-				# back-propagation
-				optimizer.zero_grad()
-				loss.backward()
-				torch.nn.utils.clip_grad_norm_(model.parameters(), clip_norm)
-				optimizer.step()
+			# back-propagation
+			optimizer.zero_grad()
+			loss.backward()
+			torch.nn.utils.clip_grad_norm_(model.parameters(), clip_norm)
+			optimizer.step()
 
-				list_losses.append(loss.data.cpu().numpy())
-				i += batch_size
+			list_losses.append(loss.data.cpu().numpy())
+			i += batch_size
 
 		for threshold in threshold_list:
-			f1_score_curr = validate(model, mesh_to_idx, mesh_vocab, tokenizer, threshold)
+			f1_score_curr, _ = validate(model, val_data, cui_to_idx, tokenizer, threshold)
 			print ("F1 score: ", f1_score_curr, " at threshold: ", threshold)
 			if f1_score_curr > best_f1_score:
 				torch.save(model.state_dict(), '../saved_models/bert_based/full_model.pt')
 				# torch.save(model.bert.state_dict(), '../saved_models/bert_based/bert_retrained_mesh_model.pt')
 				best_f1_score = f1_score_curr
 		
-		print("Loss after ", iters, ":  ", np.mean(list_losses))
+		print("Loss after epochs ", ep, ":  ", np.mean(list_losses))
 		list_losses = []
 		
 	return model 
 
 
-def validate(model, mesh_to_idx, mesh_vocab, tokenizer, threshold):
+def validate(model, data, cui_to_idx, tokenizer, threshold):
 	model = model.eval()
-	X, Mask, Y_p, Y_i, Y_o = prepare_data(data)
+	X, Mask, Y_p, Y_i, Y_o = prepare_data(data, cui_to_idx, tokenizer)
 
-	true_labels_mat_p = []
 	pred_labels_mat_p = []
-	true_labels_mat_i = []
 	pred_labels_mat_i = []
-	true_labels_mat_o = []
 	pred_labels_mat_o = []
 	
 	i = 0
@@ -160,47 +160,89 @@ def validate(model, mesh_to_idx, mesh_vocab, tokenizer, threshold):
 		predict_i = F.sigmoid(predict_i)
 		predict_o = F.sigmoid(predict_o)
 		
-		predict_p[predict_p>threshold] = 1
+		predict_p[predict_p>=threshold] = 1
 		predict_p[predict_p<threshold] = 0
-		predict_i[predict_i>threshold] = 1
+		predict_i[predict_i>=threshold] = 1
 		predict_i[predict_i<threshold] = 0
-		predict_o[predict_o>threshold] = 1
+		predict_o[predict_o>=threshold] = 1
 		predict_o[predict_o<threshold] = 0
 		
 		predict_p = predict_p.data.to('cpu').numpy()
 		predict_i = predict_i.data.to('cpu').numpy()
 		predict_o = predict_o.data.to('cpu').numpy()
-		
-		true_labels_mat_p.append(target_p)
-		true_labels_mat_i.append(target_i)
-		true_labels_mat_o.append(target_o)
 
+		# target_p = Y_p[i:i+4]
+		# target_i = Y_i[i:i+4]
+		# target_o = Y_o[i:i+4]
+		
 		pred_labels_mat_p.append(predict_p)
 		pred_labels_mat_i.append(predict_i)
 		pred_labels_mat_o.append(predict_o)
 
 		i += 4
 
-	true_labels_mat_p = np.vstack(true_labels_mat_p)
-	true_labels_mat_i = np.vstack(true_labels_mat_i)
-	true_labels_mat_o = np.vstack(true_labels_mat_o)
+	# true_labels_mat_p = np.vstack(true_labels_mat_p)
+	# true_labels_mat_i = np.vstack(true_labels_mat_i)
+	# true_labels_mat_o = np.vstack(true_labels_mat_o)
 
 	pred_labels_mat_p = np.vstack(pred_labels_mat_p)
 	pred_labels_mat_i = np.vstack(pred_labels_mat_i)
 	pred_labels_mat_o = np.vstack(pred_labels_mat_o)
 
-	f1_score_micro_p, f1_score_macro_p = f1_score(true_labels_mat_p, pred_labels_mat_p)
-	f1_score_micro_i, f1_score_macro_i = f1_score(true_labels_mat_i, pred_labels_mat_i) 
-	f1_score_micro_o, f1_score_macro_o = f1_score(true_labels_mat_o, pred_labels_mat_o) 
+	results = {}
+	f1_score_micro_p, f1_score_macro_p = f1_score(Y_p, pred_labels_mat_p)
+	pr_score_micro_p, pr_score_macro_p = precision_score(Y_p, pred_labels_mat_p)
+	re_score_micro_p, re_score_macro_p = recall_score(Y_p, pred_labels_mat_p)
+	results['f1_score_micro_p'] = f1_score_micro_p
+	results['f1_score_macro_p'] = f1_score_macro_p
+	results['pr_score_micro_p'] = pr_score_micro_p
+	results['pr_score_macro_p'] = pr_score_macro_p
+	results['re_score_micro_p'] = re_score_micro_p
+	results['re_score_macro_p'] = re_score_macro_p
 
-	display(f1_score_micro_p, f1_score_macro_p, f1_score_micro_i, f1_score_macro_i, f1_score_micro_o, f1_score_macro_o)
+	f1_score_micro_i, f1_score_macro_i = f1_score(Y_i, pred_labels_mat_i)
+	pr_score_micro_i, pr_score_macro_i = precision_score(Y_i, pred_labels_mat_i)
+	re_score_micro_i, re_score_macro_i = recall_score(Y_i, pred_labels_mat_i) 
+	results['f1_score_micro_i'] = f1_score_micro_i
+	results['f1_score_macro_i'] = f1_score_macro_i
+	results['pr_score_micro_i'] = pr_score_micro_i
+	results['pr_score_macro_i'] = pr_score_macro_i
+	results['re_score_micro_i'] = re_score_micro_i
+	results['re_score_macro_i'] = re_score_macro_i
 
-	return (f1_score_micro_p + f1_score_micro_i + f1_score_micro_o)/3.0
+	f1_score_micro_o, f1_score_macro_o = f1_score(Y_o, pred_labels_mat_o)
+	pr_score_micro_o, pr_score_macro_o = precision_score(Y_o, pred_labels_mat_o)
+	re_score_micro_o, re_score_macro_o = recall_score(Y_o, pred_labels_mat_o)  
+	results['f1_score_micro_o'] = f1_score_micro_o
+	results['f1_score_macro_o'] = f1_score_macro_o
+	results['pr_score_micro_o'] = pr_score_micro_o
+	results['pr_score_macro_o'] = pr_score_macro_o
+	results['re_score_micro_o'] = re_score_micro_o
+	results['re_score_macro_o'] = re_score_macro_o
+	results['avg_micro_f1_score'] = (f1_score_micro_p + f1_score_micro_i + f1_score_micro_o)/3.0
+
+
+	# display(results)
+
+	return (f1_score_micro_p + f1_score_micro_i + f1_score_micro_o)/3.0, results
+
+
+def tune_threshold(model, data, cui_to_idx, tokenizer):
+	best_threshold = 0.0
+	best_f1_score = -100
+	for threshold in threshold_list:
+		f1_score_curr, _ = validate(model, data, cui_to_idx, tokenizer, threshold)
+		print ("F1 score: ", f1_score_curr, " at threshold: ", threshold)
+		if f1_score_curr > best_f1_score:
+				best_f1_score = f1_score_curr
+				best_threshold = threshold
+	return best_threshold
+
 
 
 if __name__ == '__main__':
 	# load the dataset
-	data = pickle.load(open('../data/data_with_cuis.pkl', 'r')) 
+	data = json.load(open('../data/data_with_cuis.json', 'r')) 
 	# # create the vocabulary for the input 
 	idx_to_cui, cui_to_idx = extract_target_vocab(data)
 	# Load pre-trained model tokenizer (vocabulary)
@@ -210,8 +252,13 @@ if __name__ == '__main__':
 	train_idx = rd.sample(range(len(data)), int(0.7*len(data)))
 	test_idx = [i for i in range(len(data)) if i not in train_idx]
 
-	train_data = [data[i] for i in range(train_idx)]
-	test_idx = [data[i] for i in range(test_idx)]
+	train_data = [data[i] for i in train_idx]
+	test_data = [data[i] for i in test_idx]
+
+	val_idx = rd.sample(range(len(train_data)), 1000)
+	train_idx = [i for i in range(len(train_data)) if i not in val_idx]
+	val_data = [train_data[i] for i in val_idx]
+	train_data = [train_data[i] for i in train_idx]
 
 	# setting different model parameters
 	n_tgt_vocab = len(cui_to_idx)
@@ -232,8 +279,13 @@ if __name__ == '__main__':
 	# optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, betas=(0.9,0.999))
 	optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
 
-	train(model, criterion, cui_to_idx, idx_to_cui, tokenizer)
+	model = train(model, train_data, val_data, criterion, cui_to_idx, idx_to_cui, tokenizer)
+	# load the best performing model
+	model.load_state_dict(torch.load('../saved_models/bert_based/full_model.pt'))
+	best_threshold = tune_threshold(model, val_data, cui_to_idx, tokenizer)
+	_, results = validate(model, test_data, cui_to_idx, tokenizer, best_threshold)
 
+	print (results)
 
 
 
