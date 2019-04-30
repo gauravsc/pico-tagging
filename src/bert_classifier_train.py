@@ -27,9 +27,9 @@ np.random.seed(9001)
 def extract_target_vocab(data):
 	vocab = []
 	for sample in data:
-		vocab += [triplet[2] for triplet in sample['population condition'] if triplet[2] is not "NULL"]
-		vocab += [triplet[2] for triplet in sample['intervention applied'] if triplet[2] is not "NULL"]
-		vocab += [triplet[2] for triplet in sample['outcome condition'] if triplet[2] is not "NULL"]
+		vocab += [triplet[2] for triplet in sample['population condition'] if triplet[2] != "NULL"]
+		vocab += [triplet[2] for triplet in sample['intervention applied'] if triplet[2] != "NULL"]
+		vocab += [triplet[2] for triplet in sample['outcome condition'] if triplet[2] != "NULL"]
 	idx_to_cui = list(set(vocab))
 
 	cui_to_idx = {}
@@ -71,19 +71,22 @@ def prepare_data(data, cui_to_idx, tokenizer):
 
 		# population target
 		tgt_seq_p = np.zeros(len(cui_to_idx))
-		tgt_idx_p = [cui_to_idx[triplet[2]] for triplet in article['population condition'] if triplet[2] is not "NULL"]
+		tgt_idx_p = [cui_to_idx[triplet[2]] for triplet in article['population condition'] if triplet[2] != "NULL" 
+		and p_label_cnt[triplet[2]] > 2]
 		tgt_seq_p[tgt_idx_p] = 1
 		Y_p.append(tgt_seq_p)
 
 		# intervention target
 		tgt_seq_i = np.zeros(len(cui_to_idx))
-		tgt_idx_i = [cui_to_idx[triplet[2]] for triplet in article['intervention applied'] if triplet[2] is not "NULL"]
+		tgt_idx_i = [cui_to_idx[triplet[2]] for triplet in article['intervention applied'] if triplet[2] != "NULL"
+		and i_label_cnt[triplet[2]] > 2]
 		tgt_seq_i[tgt_idx_i] = 1
 		Y_i.append(tgt_seq_i)
 
 		# outcome target
 		tgt_seq_o = np.zeros(len(cui_to_idx))
-		tgt_idx_o = [cui_to_idx[triplet[2]] for triplet in article['outcome condition'] if triplet[2] is not "NULL"]
+		tgt_idx_o = [cui_to_idx[triplet[2]] for triplet in article['outcome condition'] if triplet[2] != "NULL"
+		and o_label_cnt[triplet[2]] > 2]
 		tgt_seq_o[tgt_idx_o] = 1
 		Y_o.append(tgt_seq_o)
 
@@ -248,8 +251,14 @@ if __name__ == '__main__':
 	# Load pre-trained model tokenizer (vocabulary)
 	tokenizer = BertTokenizer.from_pretrained('bert-base-uncased', max_len=512)
 
+	# load label count 
+	label_cnt = json.load(open('../data/label_counts.json', 'r'))
+	p_label_cnt = label_cnt['p_label_cnt']
+	i_label_cnt = label_cnt['i_label_cnt']
+	o_label_cnt = label_cnt['o_label_cnt']
+
 	# Split train and test data
-	train_idx = rd.sample(range(len(data)), int(0.7*len(data)))
+	train_idx = rd.sample(range(len(data)), int(0.8*len(data)))
 	test_idx = [i for i in range(len(data)) if i not in train_idx]
 
 	train_data = [data[i] for i in train_idx]

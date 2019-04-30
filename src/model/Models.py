@@ -5,16 +5,14 @@ import numpy as np
 from pytorch_pretrained_bert import BertModel
 
 class CNNModel(nn.Module):
-	def __init__(self, n_src_vocab, n_tgt_vocab, len_max_seq, d_word_vec, emb_mat_src, dropout=0.1):
+	def __init__(self, n_tgt_vocab, dropout=0.1):
 		super().__init__()
-		n_src_vocab, d_word_vec = emb_mat_src.size()
-		self.src_word_emb = nn.Embedding(n_src_vocab, d_word_vec, padding_idx=0)
-		self.src_word_emb.load_state_dict({'weight': emb_mat_src})
+		self.src_word_emb = nn.Embedding(100000, 200, padding_idx=0)
 		# self.conv_layer_1 = nn.Conv1d(d_word_vec, 1024, 3, padding=1, stride=1)
 
-		self.conv_layer_1_1 = nn.Conv1d(d_word_vec, 1024, 1, padding=0, stride=1)
-		self.conv_layer_1_3 = nn.Conv1d(d_word_vec, 1024, 3, padding=1, stride=1)
-		self.conv_layer_1_5 = nn.Conv1d(d_word_vec, 1024, 5, padding=2, stride=1)
+		self.conv_layer_1_1 = nn.Conv1d(200, 1024, 1, padding=0, stride=1)
+		self.conv_layer_1_3 = nn.Conv1d(200, 1024, 3, padding=1, stride=1)
+		self.conv_layer_1_5 = nn.Conv1d(200, 1024, 5, padding=2, stride=1)
 
 		# self.conv_layer_2 = nn.Conv1d(3072, 512, 3, padding=1, stride=1)
 		# self.conv_layer_3 = nn.Conv1d(512, 256, 3, padding=1, stride=1)
@@ -22,10 +20,11 @@ class CNNModel(nn.Module):
 		self.maxpool = nn.MaxPool1d(1000)
 		self.dropout = nn.Dropout(p=dropout)
 		# self.fc_layer_1 = nn.Linear((len_max_seq//16)*256, 256)
-		self.fc_layer_1 = nn.Linear(3072, 256)
-		self.output_layer_1 = nn.Linear(256, n_tgt_vocab)
-		self.output_layer_2 = nn.Linear(256, n_tgt_vocab)
-		self.output_layer_3 = nn.Linear(256, n_tgt_vocab)
+		self.layer_norm_1 = nn.LayerNorm(768)
+		self.fc_layer_1 = nn.Linear(3072, 768)
+		self.output_layer_1 = nn.Linear(768, n_tgt_vocab)
+		self.output_layer_2 = nn.Linear(768, n_tgt_vocab)
+		self.output_layer_3 = nn.Linear(768, n_tgt_vocab)
 		self.relu_activation = nn.ReLU()
 
 
@@ -66,6 +65,7 @@ class CNNModel(nn.Module):
 
 		output = self.dropout(output.view(output.size()[0], -1))
 		output_fc_layer = self.relu_activation(self.fc_layer_1(output))
+		# output_fc_layer = self.layer_norm_1(self.fc_layer_1(output))
 		target_p = self.output_layer_1(self.dropout(output_fc_layer))
 		target_i = self.output_layer_2(self.dropout(output_fc_layer))
 		target_o = self.output_layer_3(self.dropout(output_fc_layer))
@@ -73,12 +73,14 @@ class CNNModel(nn.Module):
 		return target_p, target_i, target_o
 
 
-
 class BERTCLassifierModel(nn.Module):
 	def __init__(self, n_tgt_vocab, dropout=0.1):
 		super().__init__()
 		self.bert = BertModel.from_pretrained('bert-base-uncased')
-		self.fc_layer = nn.Linear(768, 768)
+		self.bert.load_state_dict(torch.load('../saved_models/bert_based/bert_retrained_mesh_model.pt'))
+		self.fc_layer_1 = nn.Linear(768, 768)
+		self.fc_layer_2 = nn.Linear(768, 768)
+		self.fc_layer_3 = nn.Linear(768, 768)
 		self.output_layer_1 = nn.Linear(768, n_tgt_vocab)
 		self.output_layer_2 = nn.Linear(768, n_tgt_vocab)
 		self.output_layer_3 = nn.Linear(768, n_tgt_vocab)
@@ -88,15 +90,44 @@ class BERTCLassifierModel(nn.Module):
 		
 		# extract encoding for the [CLS] token
 		enc_out = enc_out[:,0,:]
-		enc_out = self.fc_layer(enc_out)
+		enc_out_1 = self.fc_layer_1(enc_out)
+		enc_out_2 = self.fc_layer_2(enc_out)
+		enc_out_3 = self.fc_layer_3(enc_out)
 		
 		# pass the embedding for [CLS] token to the final classification layer
-		target_p = self.output_layer_1(enc_out)
-		target_i = self.output_layer_2(enc_out)
-		target_o = self.output_layer_3(enc_out)
+		target_p = self.output_layer_1(enc_out_1)
+		target_i = self.output_layer_2(enc_out_2)
+		target_o = self.output_layer_3(enc_out_3)
 		
 		return target_p, target_i, target_o
 
 
+class BERTClassifierLabelTransfer(nn.Module):
+	def __init__(self, dropout=0.1):
+		super().__init__()
+		self.bert = BertModel.from_pretrained('bert-base-uncased')
+		self.fc_layer_1 = nn.Linear(768, 768)
+		self.fc_layer_2 = nn.Linear(768, 768)
+		self.fc_layer_3 = nn.Linear(768*2, 768)
+		self.output_layer = nn.Linear(768, 1)
+
+
+	def forward(self, input_idxs, input_mask, target_idxs, target_mask):
+		enc_out, _ = self.bert(input_idxs, attention_mask=input_mask, output_all_encoded_layers=False)
+		tgt_out, _ = self.bert(target_idxs, attention_mask=target_mask, output_all_encoded_layers=False)
+		
+		# extract encoding for the [CLS] token
+		enc_out = enc_out[:,0,:]
+		tgt_out = tgt_out[:,0,:]
+
+		enc_out = self.fc_layer_1(enc_out)
+		tgt_out = self.fc_layer_2(tgt_out)
+
+		out = torch.cat((enc_out, tgt_out), 1)
+		out = self.fc_layer_3(out)
+		# pass the embedding for [CLS] token to the final classification layer
+		target = self.output_layer(out)
+		
+		return target
 
 
