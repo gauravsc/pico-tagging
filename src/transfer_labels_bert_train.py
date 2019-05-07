@@ -15,9 +15,10 @@ from utils.embedding_operations import read_embeddings
 # Global variables
 batch_size = 4
 clip_norm = 10.0
-max_epochs = 2
+max_epochs = 50
 device = 'cuda:0'
 load_model = False
+train_model = True
 threshold_list = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
 aspect = 'population condition'
 
@@ -41,8 +42,7 @@ def extract_target_vocab(data, aspect):
 
 
 def concept_cui_mapping(data, aspect):
-	cui_to_concept = {}
-	concept_to_cui = {}
+	cui_to_concept = {}; concept_to_cui = {}
 	for sample in data:
 		all_triplets = sample[aspect]
 		for triplet in all_triplets:
@@ -54,6 +54,7 @@ def concept_cui_mapping(data, aspect):
 
 def convert_to_doc_labels(Y, O, doc_idx, concepts, concept_to_cui, cui_to_idx):
 	num_docs = len(list(set(doc_idx)))
+	print ("num docs: ", num_docs, " num cuis: ", len(cui_to_idx), " max cui idx: ", np.max(list(cui_to_idx.values())), " max doc idx: ", np.max(doc_idx), " min doc idx: ", np.min(doc_idx))
 	true_label_matrix = np.zeros((num_docs, len(cui_to_idx)))
 	pred_label_matrix = np.zeros((num_docs, len(cui_to_idx)))
 
@@ -79,21 +80,24 @@ def convert_to_doc_labels(Y, O, doc_idx, concepts, concept_to_cui, cui_to_idx):
 # 	print ("F1 Score Micro: ", (f1_score_micro_p+f1_score_micro_i+f1_score_micro_o)/3.0)
 
 def prepare_data(data, cui_to_idx, tokenizer, for_test=False):
-	X = []; Xt = []; Y = []; M = []; Mt = []; doc_idx = []; concepts = []
-	for i, article in enumerate(data):
+	X = []; Xt = []; Y = []; M = []; Mt = []; doc_idx = []; concepts = []; i = -1
+	for article in data:
 		input_text = article['population text'] + article['intervention text'] + article['outcome text']
 		tokenized_text = tokenizer.tokenize('[CLS] ' + input_text.lower())[0:512]
+		
 		src_idx_seq = tokenizer.convert_tokens_to_ids(tokenized_text)
 		src_seq = np.zeros(max_seq_len)
 		src_seq[0:len(src_idx_seq)] = src_idx_seq
-		# X.append(src_seq)
-		
+
 		# input padding mask 
 		inp_mask = np.zeros(max_seq_len)
 		inp_mask[0:len(src_idx_seq)] = 1
-		# M.append(mask)
 
 		positive_labels = [triplet[1] for triplet in article[aspect] if triplet[1] != "NULL"]
+		
+		if len(positive_labels) > 0:
+			i += 1
+
 		for label in positive_labels:
 			tokenized_text = tokenizer.tokenize('[CLS] ' + label.lower())[0:10]
 			tgt_idx_seq = tokenizer.convert_tokens_to_ids(tokenized_text)
@@ -112,11 +116,11 @@ def prepare_data(data, cui_to_idx, tokenizer, for_test=False):
 			doc_idx.append(i)
 			concepts.append(label)
 
-
 		if for_test:
 			negative_labels = [label for label in list(concept_to_cui.keys()) if label not in positive_labels]
+			print ("size of concept to cui dict: ", len(concept_to_cui.keys()), "length of negative_labels: ", len(negative_labels))
 		else:	
-			negative_labels = rd.sample(list(concept_to_cui.keys()), 5*len(positive_labels))
+			negative_labels = rd.sample(list(concept_to_cui.keys()), 100*len(positive_labels))
 
 		for label in negative_labels:
 			tokenized_text = tokenizer.tokenize('[CLS] ' + label.lower())[0:10]
@@ -135,7 +139,10 @@ def prepare_data(data, cui_to_idx, tokenizer, for_test=False):
 			Y.append(0)
 			doc_idx.append(i)
 			concepts.append(label)
-			
+	
+	print ("Y-1: ", np.sum(Y), " Y-0", len(Y)-np.sum(Y))
+
+
 	X = np.vstack(X)
 	Xt = np.vstack(Xt)
 	Y = np.vstack(Y)
@@ -148,7 +155,9 @@ def prepare_data(data, cui_to_idx, tokenizer, for_test=False):
 	Y = Y[shuffled_indices]
 	M = M[shuffled_indices]
 	Mt = Mt[shuffled_indices]
+	# print ("before: ", doc_idx)
 	doc_idx = [doc_idx[idx] for idx in shuffled_indices]
+	# print ("after: ", doc_idx)
 	concepts = [concepts[idx] for idx in shuffled_indices] 
 
 	return X, Xt, Y, M, Mt, doc_idx, concepts
@@ -191,7 +200,7 @@ def train(model, train_data, val_data, criterion, cui_to_idx, idx_to_cui, tokeni
 			f1_score_curr, _ = validate(model, val_data, cui_to_idx, tokenizer, threshold)
 			print ("F1 score: ", f1_score_curr, " at threshold: ", threshold)
 			if f1_score_curr > best_f1_score:
-				torch.save(model.state_dict(), '../saved_models/bert_based/full_model.pt')
+				torch.save(model.state_dict(), '../saved_models/bert_based/english_labels/'+aspect+'_'+'full_model.pt')
 				# torch.save(model.bert.state_dict(), '../saved_models/bert_based/bert_retrained_mesh_model.pt')
 				best_f1_score = f1_score_curr
 		
@@ -201,9 +210,9 @@ def train(model, train_data, val_data, criterion, cui_to_idx, idx_to_cui, tokeni
 	return model 
 
 
-def validate(model, data, cui_to_idx, tokenizer, threshold):
+def validate(model, data, cui_to_idx, tokenizer, threshold, test=False):
 	model = model.eval()
-	X, Xt, Y, M, Mt, doc_idx, concepts = prepare_data(data, cui_to_idx, tokenizer, for_test=True)
+	X, Xt, Y, M, Mt, doc_idx, concepts = prepare_data(data, cui_to_idx, tokenizer, for_test=test)
 	# print ("Entered test function ...")
 	# print ("X shape: ", X.shape, " Xt Shape: ", Xt.shape, " Y Shape: ", Y.shape, " M Shape: ", M.shape, " Mt shape: ", Mt.shape)
 
@@ -224,6 +233,7 @@ def validate(model, data, cui_to_idx, tokenizer, threshold):
 
 		O.append(o)
 		i += 4
+		print (i,"/",X.shape[0])
 
 	O = np.concatenate(O)
 
@@ -256,7 +266,6 @@ def tune_threshold(model, data, cui_to_idx, tokenizer):
 				best_f1_score = f1_score_curr
 				best_threshold = threshold
 	return best_threshold
-
 
 
 if __name__ == '__main__':
@@ -298,20 +307,24 @@ if __name__ == '__main__':
 	# model = nn.DataParallel(model, output_device=device)
 	model.to(device)
 
-	if load_model and os.path.isfile('../saved_models/bert_based/model.pt'):
-		model.load_state_dict(torch.load('../saved_models/bert_based/model.pt'))
+	if load_model and os.path.isfile('../saved_models/bert_based/english_labels/'+aspect+'_'+'full_model.pt'):
+		model.load_state_dict(torch.load('../saved_models/bert_based/english_labels/'+aspect+'_'+'full_model.pt'))
 		print ("Done loading the saved model .....")
 
 	criterion = torch.nn.BCEWithLogitsLoss(reduction="none")
 	# optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, betas=(0.9,0.999))
 	optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
 
-	model = train(model, train_data, val_data, criterion, cui_to_idx, idx_to_cui, tokenizer)
-	# load the best performing model
-	model.load_state_dict(torch.load('../saved_models/bert_based/full_model.pt'))
-	best_threshold = tune_threshold(model, val_data, cui_to_idx, tokenizer)
-	_, results = validate(model, test_data, cui_to_idx, tokenizer, best_threshold)
+	if train_model:
+		model = train(model, train_data, val_data, criterion, cui_to_idx, idx_to_cui, tokenizer)
 
+	# load the best performing model
+	model.load_state_dict(torch.load('../saved_models/bert_based/english_labels/'+aspect+'_'+'full_model.pt'))
+	best_threshold = tune_threshold(model, val_data, cui_to_idx, tokenizer)
+	_, results = validate(model, test_data, cui_to_idx, tokenizer, best_threshold, test=True)
+
+
+	print ("Results for ", aspect)
 	print (results)
 
 
