@@ -3,6 +3,7 @@ import os
 import pickle
 import numpy as np
 import random as rd
+from collections import defaultdict
 from nltk.tokenize import word_tokenize
 import torch
 import torch.nn as nn
@@ -63,45 +64,50 @@ def display(results):
 
 
 def prepare_data_for_label_training(data, cui_to_idx, tokenizer):
-	X = []; Y_p = []; Y_i = []; Y_o = []; Mask = []
+	X = []; Y_p = []; Y_i = []; Y_o = []; Mask = []; concepts = defaultdict(list)
+	aspects = ['population condition', 'intervention applied', 'outcome condition']
 
 	for article in data:
-		aspects = ['population condition', 'intervention applied', 'outcome condition']
 		for aspect in aspects:
-			concepts = [triplet[1] for triplet in article[aspect] if triplet[1] != "NULL"]
-			for concept in concepts:
-				input_text = concept
-				tokenized_text = tokenizer.tokenize('[CLS] ' + input_text.lower())[0:512]
-				idx_seq = tokenizer.convert_tokens_to_ids(tokenized_text)
-				src_seq = np.zeros(max_seq_len)
-				src_seq[0:len(idx_seq)] = idx_seq
-				X.append(src_seq)
-		
-				# input padding mask 
-				mask = np.zeros(max_seq_len)
-				mask[0:len(idx_seq)] = 1
-				Mask.append(mask)
+			concepts[aspect] += [triplet[1] for triplet in article[aspect] if triplet[1] != "NULL"]
 
-				# population target
-				tgt_seq_p = np.zeros(len(cui_to_idx))
-				if aspect == 'population condition':
-					tgt_idx_p = [cui_to_idx[concept_to_cui[concept]]]
-					tgt_seq_p[tgt_idx_p] = 1
-				Y_p.append(tgt_seq_p)
+	for aspect in aspects:
+		concepts[aspect] = list(set(concepts[aspect]))
 
-				# intervention target
-				tgt_seq_i = np.zeros(len(cui_to_idx))
-				if aspect == 'intervention applied':
-					tgt_idx_i = [cui_to_idx[concept_to_cui[concept]]]
-					tgt_seq_i[tgt_idx_i] = 1
-				Y_i.append(tgt_seq_i)
+	for aspect in aspects:
+		for concept in concepts[aspect]:
+			input_text = concept
+			tokenized_text = tokenizer.tokenize('[CLS] ' + input_text.lower())[0:512]
+			idx_seq = tokenizer.convert_tokens_to_ids(tokenized_text)
+			src_seq = np.zeros(max_seq_len)
+			src_seq[0:len(idx_seq)] = idx_seq
+			X.append(src_seq)
 
-				# outcome target
-				tgt_seq_o = np.zeros(len(cui_to_idx))
-				if aspect == 'outcome condition':
-					tgt_idx_o = [cui_to_idx[concept_to_cui[concept]]]
-					tgt_seq_o[tgt_idx_o] = 1
-				Y_o.append(tgt_seq_o)
+			# input padding mask 
+			mask = np.zeros(max_seq_len)
+			mask[0:len(idx_seq)] = 1
+			Mask.append(mask)
+
+			# population target
+			tgt_seq_p = np.zeros(len(cui_to_idx))
+			if aspect == 'population condition':
+				tgt_idx_p = [cui_to_idx[concept_to_cui[concept]]]
+				tgt_seq_p[tgt_idx_p] = 1
+			Y_p.append(tgt_seq_p)
+
+			# intervention target
+			tgt_seq_i = np.zeros(len(cui_to_idx))
+			if aspect == 'intervention applied':
+				tgt_idx_i = [cui_to_idx[concept_to_cui[concept]]]
+				tgt_seq_i[tgt_idx_i] = 1
+			Y_i.append(tgt_seq_i)
+
+			# outcome target
+			tgt_seq_o = np.zeros(len(cui_to_idx))
+			if aspect == 'outcome condition':
+				tgt_idx_o = [cui_to_idx[concept_to_cui[concept]]]
+				tgt_seq_o[tgt_idx_o] = 1
+			Y_o.append(tgt_seq_o)
 
 	X = np.vstack(X); Y_p = np.vstack(Y_p); Y_i = np.vstack(Y_i); Y_o = np.vstack(Y_o); Mask = np.vstack(Mask)
 	
@@ -157,20 +163,28 @@ def prepare_data(data, cui_to_idx, tokenizer):
 def train(model, train_data, val_data, all_data, criterion, cui_to_idx, idx_to_cui, tokenizer):
 	X_1, Mask_1, Y_p_1, Y_i_1, Y_o_1 = prepare_data(train_data, cui_to_idx, tokenizer)
 	X_2, Mask_2, Y_p_2, Y_i_2, Y_o_2 = prepare_data_for_label_training(all_data, cui_to_idx, tokenizer)
-	X = np.vstack((X_1, X_2)); Mask = np.vstack((Mask_1, Mask_2)); Y_p = np.vstack((Y_p_1, Y_p_2)); Y_i = np.vstack((Y_i_1, Y_i_2)); Y_o = np.vstack((Y_o_1, Y_o_2))
-	shfl_idxs = rd.sample(range(X.shape[0]), X.shape[0])
-	X = X[shfl_idxs]; Mask = Mask[shfl_idxs]; Y_p = Y_p[shfl_idxs]; Y_i = Y_i[shfl_idxs]; Y_o = Y_o[shfl_idxs]
+	# X = np.vstack((X_1, X_2)); Mask = np.vstack((Mask_1, Mask_2)); Y_p = np.vstack((Y_p_1, Y_p_2)); Y_i = np.vstack((Y_i_1, Y_i_2)); Y_o = np.vstack((Y_o_1, Y_o_2))
+	# shfl_idxs = rd.sample(range(X.shape[0]), X.shape[0])
+	# X = X[shfl_idxs]; Mask = Mask[shfl_idxs]; Y_p = Y_p[shfl_idxs]; Y_i = Y_i[shfl_idxs]; Y_o = Y_o[shfl_idxs]
+	print ('num docs: ', X_1.shape[0], " num of labels: ", X_2.shape[0])
 
 	best_f1_score = -100; list_losses = []
 	for ep in range(max_epochs):
 		model = model.train()
 		i = 0
-		while i < X.shape[0]:
-			input_idx_seq = torch.tensor(X[i:i+batch_size]).to(device, dtype=torch.long)
-			input_mask = torch.tensor(Mask[i:i+batch_size]).to(device, dtype=torch.long)
-			target_p = torch.tensor(Y_p[i:i+batch_size]).to(device, dtype=torch.float)
-			target_i = torch.tensor(Y_i[i:i+batch_size]).to(device, dtype=torch.float)
-			target_o = torch.tensor(Y_o[i:i+batch_size]).to(device, dtype=torch.float)
+		while i < X_1.shape[0]:
+			if rd.random() < 0.7:
+				X = X_1; Mask = Mask_1; Y_p = Y_p_1; Y_i = Y_i_1; Y_o = Y_o_1
+			else:
+				X = X_2; Mask = Mask_2; Y_p = Y_p_2; Y_i = Y_i_2; Y_o = Y_o_2
+
+			indices = rd.sample(range(X.shape[0]), batch_size)
+
+			input_idx_seq = torch.tensor(X[indices]).to(device, dtype=torch.long)
+			input_mask = torch.tensor(Mask[indices]).to(device, dtype=torch.long)
+			target_p = torch.tensor(Y_p[indices]).to(device, dtype=torch.float)
+			target_i = torch.tensor(Y_i[indices]).to(device, dtype=torch.float)
+			target_o = torch.tensor(Y_o[indices]).to(device, dtype=torch.float)
 			output_p, output_i, output_o = model(input_idx_seq, input_mask)
 
 			# computing the loss over the prediction
