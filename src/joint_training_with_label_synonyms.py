@@ -3,7 +3,9 @@ import os
 import pickle
 import numpy as np
 import random as rd
+from collections import defaultdict
 from nltk.tokenize import word_tokenize
+from nltk.corpus import wordnet
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -38,6 +40,27 @@ def extract_target_vocab(data):
 
 	return idx_to_cui, cui_to_idx 
 
+def concept_cui_mapping(data):
+	cui_to_concept = {}; concept_to_cui = {}
+	for sample in data:
+		triplets = sample['population condition'] + sample['intervention applied'] + sample['outcome condition']
+		for triplet in triplets:
+			if triplet[1] != 'NULL' and triplet[2] != 'NULL': 
+				concept_to_cui[triplet[1]] = triplet[2]
+				cui_to_concept[triplet[2]] = triplet[1]
+
+	return cui_to_concept, concept_to_cui
+
+def extract_synonyms(word):
+	synonyms = []
+
+	for syn in wordnet.synsets(word):
+		for l in syn.lemmas():
+			synonyms.append(l.name())
+
+	return list(set(synonyms))
+
+
 def display(results):
 	print ("F1 Score Micro Population: ", f1_score_micro_p)
 	print ("F1 Score Macro Population: ", f1_score_macro_p)
@@ -49,13 +72,112 @@ def display(results):
 	print ("F1 Score Macro: ", (f1_score_macro_p+f1_score_macro_i+f1_score_macro_o)/3.0)
 	print ("F1 Score Micro: ", (f1_score_micro_p+f1_score_micro_i+f1_score_micro_o)/3.0)
 
-def prepare_data(data, cui_to_idx, tokenizer):
-	X = []
-	Y_p = []
-	Y_i = []
-	Y_o = []
-	Mask = []
+
+
+def prepare_data_for_label_training(data, cui_to_idx, tokenizer):
+	X = []; Y_p = []; Y_i = []; Y_o = []; Mask = []; concepts = defaultdict(list)
+	aspects = ['population condition', 'intervention applied', 'outcome condition']
+
+	for article in data:
+		for aspect in aspects:
+			concepts[aspect] += [triplet[1] for triplet in article[aspect] if triplet[1] != "NULL"]
+
+	for aspect in aspects:
+		concepts[aspect] = list(set(concepts[aspect]))
+
+	for aspect in aspects:
+		for concept in concepts[aspect]:
+			input_text = concept
+			tokenized_text = tokenizer.tokenize('[CLS] ' + input_text.lower())[0:512]
+			idx_seq = tokenizer.convert_tokens_to_ids(tokenized_text)
+			src_seq = np.zeros(max_seq_len)
+			src_seq[0:len(idx_seq)] = idx_seq
+			X.append(src_seq)
+
+			# input padding mask 
+			mask = np.zeros(max_seq_len)
+			mask[0:len(idx_seq)] = 1
+			Mask.append(mask)
+
+			# population target
+			tgt_seq_p = np.zeros(len(cui_to_idx))
+			if aspect == 'population condition':
+				tgt_idx_p = [cui_to_idx[concept_to_cui[concept]]]
+				tgt_seq_p[tgt_idx_p] = 1
+			Y_p.append(tgt_seq_p)
+
+			# intervention target
+			tgt_seq_i = np.zeros(len(cui_to_idx))
+			if aspect == 'intervention applied':
+				tgt_idx_i = [cui_to_idx[concept_to_cui[concept]]]
+				tgt_seq_i[tgt_idx_i] = 1
+			Y_i.append(tgt_seq_i)
+
+			# outcome target
+			tgt_seq_o = np.zeros(len(cui_to_idx))
+			if aspect == 'outcome condition':
+				tgt_idx_o = [cui_to_idx[concept_to_cui[concept]]]
+				tgt_seq_o[tgt_idx_o] = 1
+			Y_o.append(tgt_seq_o)
+
+	for it in range(2):
+		for aspect in aspects:
+			for concept in concepts[aspect]:
+				input_text = concept.lower()
+				input_word_seq = word_tokenize(input_text)
+				new_word_seq = []
+				for word in input_word_seq:
+					synonyms = extract_synonyms(word)
+					if len(synonyms) > 0:
+						rand_syn = rd.sample(synonyms, 1)[0]
+					else:
+						rand_syn = word
+					new_word_seq.append(rand_syn)
+
+				input_text = ' '.join(new_word_seq)
+				tokenized_text = tokenizer.tokenize('[CLS] ' + input_text.lower())[0:512]
+				idx_seq = tokenizer.convert_tokens_to_ids(tokenized_text)
+				src_seq = np.zeros(max_seq_len)
+				src_seq[0:len(idx_seq)] = idx_seq
+				X.append(src_seq)
+
+				# input padding mask 
+				mask = np.zeros(max_seq_len)
+				mask[0:len(idx_seq)] = 1
+				Mask.append(mask)
+
+				# population target
+				tgt_seq_p = np.zeros(len(cui_to_idx))
+				if aspect == 'population condition':
+					tgt_idx_p = [cui_to_idx[concept_to_cui[concept]]]
+					tgt_seq_p[tgt_idx_p] = 1
+				Y_p.append(tgt_seq_p)
+
+				# intervention target
+				tgt_seq_i = np.zeros(len(cui_to_idx))
+				if aspect == 'intervention applied':
+					tgt_idx_i = [cui_to_idx[concept_to_cui[concept]]]
+					tgt_seq_i[tgt_idx_i] = 1
+				Y_i.append(tgt_seq_i)
+
+				# outcome target
+				tgt_seq_o = np.zeros(len(cui_to_idx))
+				if aspect == 'outcome condition':
+					tgt_idx_o = [cui_to_idx[concept_to_cui[concept]]]
+					tgt_seq_o[tgt_idx_o] = 1
+				Y_o.append(tgt_seq_o)
+
+
+	X = np.vstack(X); Y_p = np.vstack(Y_p); Y_i = np.vstack(Y_i); Y_o = np.vstack(Y_o); Mask = np.vstack(Mask)
 	
+	return X, Mask, Y_p, Y_i, Y_o
+
+
+
+
+def prepare_data(data, cui_to_idx, tokenizer):
+	X = []; Y_p = []; Y_i = []; Y_o = []; Mask = []
+
 	for article in data:
 		input_text = article['population text'] + article['intervention text'] + article['outcome text']
 		tokenized_text = tokenizer.tokenize('[CLS] ' + input_text.lower())[0:512]
@@ -90,30 +212,38 @@ def prepare_data(data, cui_to_idx, tokenizer):
 		tgt_seq_o[tgt_idx_o] = 1
 		Y_o.append(tgt_seq_o)
 
-	X = np.vstack(X)
-	Y_p = np.vstack(Y_p)
-	Y_i = np.vstack(Y_i)
-	Y_o = np.vstack(Y_o)
-	Mask = np.vstack(Mask)
+	X = np.vstack(X); Y_p = np.vstack(Y_p); Y_i = np.vstack(Y_i); Y_o = np.vstack(Y_o); Mask = np.vstack(Mask)
 	
 	return X, Mask, Y_p, Y_i, Y_o
 
-def train(model, train_data, val_data, criterion, cui_to_idx, idx_to_cui, tokenizer):	
-	
-	
-	X, Mask, Y_p, Y_i, Y_o = prepare_data(train_data, cui_to_idx, tokenizer)
 
-	best_f1_score = -100
-	list_losses = []	
+
+
+def train(model, train_data, val_data, all_data, criterion, cui_to_idx, idx_to_cui, tokenizer):
+	X_1, Mask_1, Y_p_1, Y_i_1, Y_o_1 = prepare_data(train_data, cui_to_idx, tokenizer)
+	X_2, Mask_2, Y_p_2, Y_i_2, Y_o_2 = prepare_data_for_label_training(all_data, cui_to_idx, tokenizer)
+	# X = np.vstack((X_1, X_2)); Mask = np.vstack((Mask_1, Mask_2)); Y_p = np.vstack((Y_p_1, Y_p_2)); Y_i = np.vstack((Y_i_1, Y_i_2)); Y_o = np.vstack((Y_o_1, Y_o_2))
+	# shfl_idxs = rd.sample(range(X.shape[0]), X.shape[0])
+	# X = X[shfl_idxs]; Mask = Mask[shfl_idxs]; Y_p = Y_p[shfl_idxs]; Y_i = Y_i[shfl_idxs]; Y_o = Y_o[shfl_idxs]
+	print ('num docs: ', X_1.shape[0], " num of labels: ", X_2.shape[0])
+
+	best_f1_score = -100; list_losses = []
 	for ep in range(max_epochs):
 		model = model.train()
 		i = 0
-		while i < X.shape[0]:
-			input_idx_seq = torch.tensor(X[i:i+batch_size]).to(device, dtype=torch.long)
-			input_mask = torch.tensor(Mask[i:i+batch_size]).to(device, dtype=torch.long)
-			target_p = torch.tensor(Y_p[i:i+batch_size]).to(device, dtype=torch.float)
-			target_i = torch.tensor(Y_i[i:i+batch_size]).to(device, dtype=torch.float)
-			target_o = torch.tensor(Y_o[i:i+batch_size]).to(device, dtype=torch.float)
+		while i < X_1.shape[0]:
+			if rd.random() < 0.5 or ep > 40:
+				X = X_1; Mask = Mask_1; Y_p = Y_p_1; Y_i = Y_i_1; Y_o = Y_o_1
+			else:
+				X = X_2; Mask = Mask_2; Y_p = Y_p_2; Y_i = Y_i_2; Y_o = Y_o_2
+
+			indices = rd.sample(range(X.shape[0]), batch_size)
+
+			input_idx_seq = torch.tensor(X[indices]).to(device, dtype=torch.long)
+			input_mask = torch.tensor(Mask[indices]).to(device, dtype=torch.long)
+			target_p = torch.tensor(Y_p[indices]).to(device, dtype=torch.float)
+			target_i = torch.tensor(Y_i[indices]).to(device, dtype=torch.float)
+			target_o = torch.tensor(Y_o[indices]).to(device, dtype=torch.float)
 			output_p, output_i, output_o = model(input_idx_seq, input_mask)
 
 			# computing the loss over the prediction
@@ -135,7 +265,7 @@ def train(model, train_data, val_data, criterion, cui_to_idx, idx_to_cui, tokeni
 			f1_score_curr, _ = validate(model, val_data, cui_to_idx, tokenizer, threshold)
 			print ("F1 score: ", f1_score_curr, " at threshold: ", threshold)
 			if f1_score_curr > best_f1_score:
-				torch.save(model.state_dict(), '../saved_models/bert_based/full_model.pt')
+				torch.save(model.state_dict(), '../saved_models/bert_based/english_labels/synonym_full_model.pt')
 				# torch.save(model.bert.state_dict(), '../saved_models/bert_based/bert_retrained_mesh_model.pt')
 				best_f1_score = f1_score_curr
 		
@@ -149,11 +279,8 @@ def validate(model, data, cui_to_idx, tokenizer, threshold):
 	model = model.eval()
 	X, Mask, Y_p, Y_i, Y_o = prepare_data(data, cui_to_idx, tokenizer)
 
-	pred_labels_mat_p = []
-	pred_labels_mat_i = []
-	pred_labels_mat_o = []
-	
-	i = 0
+	pred_labels_mat_p = []; pred_labels_mat_i = []; pred_labels_mat_o = []; i = 0
+
 	while i < X.shape[0]:			
 		input_idx_seq = torch.tensor(X[i:i+4]).to(device, dtype=torch.long)
 		input_mask = torch.tensor(Mask[i:i+4]).to(device, dtype=torch.long)
@@ -245,7 +372,9 @@ def tune_threshold(model, data, cui_to_idx, tokenizer):
 
 if __name__ == '__main__':
 	# load the dataset
-	data = json.load(open('../data/data_with_cuis.json', 'r')) 
+	data = json.load(open('../data/data_with_cuis.json', 'r'))
+	# concept to cui mappings
+	cui_to_concept, concept_to_cui = concept_cui_mapping(data) 
 	# # create the vocabulary for the input 
 	idx_to_cui, cui_to_idx = extract_target_vocab(data)
 	# Load pre-trained model tokenizer (vocabulary)
@@ -280,17 +409,17 @@ if __name__ == '__main__':
 	# model = nn.DataParallel(model, output_device=device)
 	model.to(device)
 
-	if load_model and os.path.isfile('../saved_models/bert_based/full_model.pt'):
-		model.load_state_dict(torch.load('../saved_models/bert_based/full_model.pt'))
+	if load_model:
+		model.load_state_dict(torch.load('../saved_models/bert_based/english_labels/synonym_full_model.pt'))
 		print ("Done loading the saved model .....")
 
 	criterion = torch.nn.BCEWithLogitsLoss(reduction="none")
 	# optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, betas=(0.9,0.999))
 	optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
 
-	model = train(model, train_data, val_data, criterion, cui_to_idx, idx_to_cui, tokenizer)
+	model = train(model, train_data, val_data, data, criterion, cui_to_idx, idx_to_cui, tokenizer)
 	# load the best performing model
-	model.load_state_dict(torch.load('../saved_models/bert_based/full_model.pt'))
+	model.load_state_dict(torch.load('../saved_models/bert_based/english_labels/synonym_full_model.pt'))
 	best_threshold = tune_threshold(model, val_data, cui_to_idx, tokenizer)
 	_, results = validate(model, test_data, cui_to_idx, tokenizer, best_threshold)
 

@@ -14,7 +14,7 @@ from utils.embedding_operations import read_embeddings
 
 # Global variables
 batch_size = 4
-clip_norm = 10.0
+clip_norm = 20.0
 max_epochs = 100
 device = 'cuda:0'
 load_model = False

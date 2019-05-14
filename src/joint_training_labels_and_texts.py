@@ -15,7 +15,7 @@ from utils.embedding_operations import read_embeddings
 
 # Global variables
 batch_size = 4
-clip_norm = 10.0
+clip_norm = 20.0
 max_epochs = 100
 device = 'cuda:0'
 load_model = False
@@ -173,7 +173,7 @@ def train(model, train_data, val_data, all_data, criterion, cui_to_idx, idx_to_c
 		model = model.train()
 		i = 0
 		while i < X_1.shape[0]:
-			if rd.random() < 0.7:
+			if rd.random() < 0.5 or ep > 40:
 				X = X_1; Mask = Mask_1; Y_p = Y_p_1; Y_i = Y_i_1; Y_o = Y_o_1
 			else:
 				X = X_2; Mask = Mask_2; Y_p = Y_p_2; Y_i = Y_i_2; Y_o = Y_o_2
@@ -206,7 +206,7 @@ def train(model, train_data, val_data, all_data, criterion, cui_to_idx, idx_to_c
 			f1_score_curr, _ = validate(model, val_data, cui_to_idx, tokenizer, threshold)
 			print ("F1 score: ", f1_score_curr, " at threshold: ", threshold)
 			if f1_score_curr > best_f1_score:
-				torch.save(model.state_dict(), '../saved_models/bert_based/full_model.pt')
+				torch.save(model.state_dict(), '../saved_models/bert_based/english_labels/full_model.pt')
 				# torch.save(model.bert.state_dict(), '../saved_models/bert_based/bert_retrained_mesh_model.pt')
 				best_f1_score = f1_score_curr
 		
@@ -350,8 +350,8 @@ if __name__ == '__main__':
 	# model = nn.DataParallel(model, output_device=device)
 	model.to(device)
 
-	if load_model and os.path.isfile('../saved_models/bert_based/full_model.pt'):
-		model.load_state_dict(torch.load('../saved_models/bert_based/full_model.pt'))
+	if load_model:
+		model.load_state_dict(torch.load('../saved_models/bert_based/english_labels/full_model.pt'))
 		print ("Done loading the saved model .....")
 
 	criterion = torch.nn.BCEWithLogitsLoss(reduction="none")
@@ -360,7 +360,7 @@ if __name__ == '__main__':
 
 	model = train(model, train_data, val_data, data, criterion, cui_to_idx, idx_to_cui, tokenizer)
 	# load the best performing model
-	model.load_state_dict(torch.load('../saved_models/bert_based/full_model.pt'))
+	model.load_state_dict(torch.load('../saved_models/bert_based/english_labels/full_model.pt'))
 	best_threshold = tune_threshold(model, val_data, cui_to_idx, tokenizer)
 	_, results = validate(model, test_data, cui_to_idx, tokenizer, best_threshold)
 
