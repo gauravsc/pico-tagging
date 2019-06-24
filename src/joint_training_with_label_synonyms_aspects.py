@@ -173,8 +173,6 @@ def prepare_data_for_label_training(data, cui_to_idx, tokenizer):
 	return X, Mask, Y_p, Y_i, Y_o
 
 
-
-
 def prepare_data(data, cui_to_idx, tokenizer):
 	X = []; Y_p = []; Y_i = []; Y_o = []; Mask = []
 
@@ -350,7 +348,6 @@ def validate(model, data, cui_to_idx, tokenizer, threshold):
 	results['re_score_micro_o'] = re_score_micro_o
 	results['re_score_macro_o'] = re_score_macro_o
 	results['avg_micro_f1_score'] = (f1_score_micro_p + f1_score_micro_i + f1_score_micro_o)/3.0
-
 
 	# display(results)
 
