@@ -1,7 +1,6 @@
 import json
 
-
-
+# extract vocabulary from the data file
 def extract_target_vocab(data):
 	vocab = []
 	for sample in data:
@@ -27,7 +26,7 @@ def update_label_count(label_cnt, labels):
 
 
 data = json.load(open('../data/data_with_cuis.json', 'r')) 
-# # create the vocabulary for the input 
+# # create vocabulary for the input 
 idx_to_cui, cui_to_idx = extract_target_vocab(data)
 
 p_label_cnt = {}; i_label_cnt = {}; o_label_cnt = {}
@@ -39,6 +38,10 @@ for article in data:
 	o_labels = [triplet[2] for triplet in article['outcome condition'] if triplet[2] != "NULL"]
 	o_label_cnt = update_label_count(o_label_cnt, o_labels)
 
-
-
 json.dump({'p_label_cnt':p_label_cnt, 'i_label_cnt': i_label_cnt, 'o_label_cnt': o_label_cnt}, open('../data/label_counts.json', 'w'))
+
+print ("unique labes in P: ", len(p_label_cnt), " I: ", len(i_label_cnt), " O: ", len(o_label_cnt))
+
+print ("all labels in P: ", sum(p_label_cnt.values()), " I: ", sum(i_label_cnt.values()), " O: ", sum(o_label_cnt.values()))
+
+print ("Total Instances: ", len(data)) 

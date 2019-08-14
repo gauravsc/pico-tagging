@@ -250,7 +250,7 @@ def train(model, train_data, val_data, all_data, criterion, cui_to_idx, idx_to_c
 			target_p = torch.tensor(Y_p[indices]).to(device, dtype=torch.float)
 			target_i = torch.tensor(Y_i[indices]).to(device, dtype=torch.float)
 			target_o = torch.tensor(Y_o[indices]).to(device, dtype=torch.float)
-			output_p, output_i, output_o = model(input_idx_seq, input_mask, is_label_training=is_label_training, noise_weight = 1.0)
+			output_p, output_i, output_o = model(input_idx_seq, input_mask, is_label_training=is_label_training, noise_weight = 0.0)
 
 			# computing the loss over the prediction
 			loss = (criterion(output_p, target_p) + criterion(output_i, target_i) + criterion(output_o, target_o))*1/3.0
