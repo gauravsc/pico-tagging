@@ -77,7 +77,7 @@ class BERTCLassifierModel(nn.Module):
 	def __init__(self, n_tgt_vocab, dropout=0.1):
 		super().__init__()
 		self.bert = BertModel.from_pretrained('bert-base-uncased')
-		self.bert.load_state_dict(torch.load('../saved_models/bert_based/bert_retrained_mesh_model.pt'))
+		# self.bert.load_state_dict(torch.load('../saved_models/bert_based/bert_retrained_mesh_model.pt'))
 		self.fc_layer_1 = nn.Linear(768, 768)
 		self.fc_layer_2 = nn.Linear(768, 768)
 		self.fc_layer_3 = nn.Linear(768, 768)
