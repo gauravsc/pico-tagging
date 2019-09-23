@@ -32,7 +32,7 @@ def extract_target_vocab(data):
 		vocab += [triplet[2] for triplet in sample['population condition'] if triplet[2] != "NULL"]
 		vocab += [triplet[2] for triplet in sample['intervention applied'] if triplet[2] != "NULL"]
 		vocab += [triplet[2] for triplet in sample['outcome condition'] if triplet[2] != "NULL"]
-	idx_to_cui = list(set(vocab))
+	idx_to_cui = sorted(list(set(vocab)))
 
 	cui_to_idx = {}
 	for idx, cui in enumerate(idx_to_cui):
@@ -250,7 +250,7 @@ def train(model, train_data, val_data, all_data, criterion, cui_to_idx, idx_to_c
 			target_p = torch.tensor(Y_p[indices]).to(device, dtype=torch.float)
 			target_i = torch.tensor(Y_i[indices]).to(device, dtype=torch.float)
 			target_o = torch.tensor(Y_o[indices]).to(device, dtype=torch.float)
-			output_p, output_i, output_o = model(input_idx_seq, input_mask, is_label_training=is_label_training, noise_weight = 0.7)
+			output_p, output_i, output_o = model(input_idx_seq, input_mask, is_label_training=is_label_training, noise_weight = 1.0)
 
 			# computing the loss over the prediction
 			loss = (criterion(output_p, target_p) + criterion(output_i, target_i) + criterion(output_o, target_o))*1/3.0
@@ -392,13 +392,13 @@ if __name__ == '__main__':
 	o_label_cnt = label_cnt['o_label_cnt']
 
 	# Split train and test data
-	train_idx = rd.sample(range(len(data)), int(0.8*len(data)))
+	train_idx = rd.sample(range(len(data)), int(0.9*len(data)))
 	test_idx = [i for i in range(len(data)) if i not in train_idx]
 
 	train_data = [data[i] for i in train_idx]
 	test_data = [data[i] for i in test_idx]
 
-	val_idx = rd.sample(range(len(train_data)), 1000)
+	val_idx = rd.sample(range(len(train_data)), 300)
 	train_idx = [i for i in range(len(train_data)) if i not in val_idx]
 	val_data = [train_data[i] for i in val_idx]
 	train_data = [train_data[i] for i in train_idx]
@@ -426,6 +426,7 @@ if __name__ == '__main__':
 	# load the best performing model
 	model.load_state_dict(torch.load('../saved_models/bert_based/english_labels/aspect_full_model.pt'))
 	best_threshold = tune_threshold(model, val_data, cui_to_idx, tokenizer)
+	print ("Best threshold was: ", best_threshold)
 	_, results = validate(model, test_data, cui_to_idx, tokenizer, best_threshold)
 
 	print (results)
